@@ -17,12 +17,6 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    beat_schedule={
-        "daily-crawl": {
-            "task": "app.workers.tasks.daily_crawl_task",
-            "schedule": crontab(hour=2, minute=0),
-        },
-    },
 )
 
 celery_app.autodiscover_tasks(["app.workers"])

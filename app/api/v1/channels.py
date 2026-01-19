@@ -1,9 +1,11 @@
+# app/api/v1/channels.py
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from app.db.session import SessionLocal
 from app.models.channel import Channel
 from app.external.youtube import extract_channel_id_from_url, get_channel_name
+from app.workers.tasks import process_channel_task  # ← НОВАЯ ЗАДАЧА
 
 router = APIRouter()
 
@@ -16,21 +18,15 @@ class ChannelAddRequest(BaseModel):
 def add_channel(request: ChannelAddRequest):
     try:
         channel_id = extract_channel_id_from_url(request.url)
-        start_date = datetime.fromisoformat(request.start_date)
+        start_date = datetime.fromisoformat(request.start_date).replace(tzinfo=timezone.utc)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid input: {e}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid input: {e}")
 
     db = SessionLocal()
     try:
         existing = db.query(Channel).filter(Channel.id == channel_id).first()
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Channel already exists"
-            )
+            raise HTTPException(status_code=409, detail="Channel already exists")
 
         name = get_channel_name(channel_id)
         new_channel = Channel(
@@ -41,9 +37,12 @@ def add_channel(request: ChannelAddRequest):
         )
         db.add(new_channel)
         db.commit()
-        db.refresh(new_channel)
+
+        # 🔥 ЗАПУСКАЕМ ОБРАБОТКУ СРАЗУ
+        process_channel_task.delay(channel_id)
+
         return {
-            "message": "Channel added successfully",
+            "message": "Channel added and processing started",
             "channel_id": new_channel.id,
             "name": new_channel.name,
             "start_date": new_channel.start_date.isoformat(),

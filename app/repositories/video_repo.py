@@ -6,8 +6,11 @@ class VideoRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def video_exists(self, video_id: str) -> bool:
+        return self.db.query(Video).filter(Video.id == video_id).first() is not None
+
     def create_if_not_exists(self, video_data: dict) -> bool:
-        if self.db.query(Video).filter(Video.id == video_data["id"]).first():
+        if self.video_exists(video_data["id"]):
             return False
         video = Video(**video_data)
         self.db.add(video)
