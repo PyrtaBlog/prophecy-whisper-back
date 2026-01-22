@@ -1,3 +1,4 @@
+# app/models/video.py
 from sqlalchemy import Column, String, DateTime, Text
 from sqlalchemy.types import Enum as SQLEnum
 from app.db.session import Base
@@ -14,6 +15,6 @@ class Video(Base):
     id = Column(String, primary_key=True, index=True)
     channel_id = Column(String, index=True)
     title = Column(String)
-    publish_date = Column(DateTime)
+    publish_date = Column(DateTime(timezone=True))  # ← Теперь с временной зоной
     transcript = Column(Text, nullable=True)
     status = Column(SQLEnum(VideoStatus), default=VideoStatus.transcript_pending)

@@ -10,12 +10,22 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
     restart: always
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   web:
     build: .
@@ -27,23 +37,27 @@ services:
     ports:
       - "8080:8000"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - ./app:/app/app
+      - .:/app  # ← Монтируем ВЕСЬ проект
 
   celery_worker:
     build: .
-    command: celery -A app.workers.celery_app worker --loglevel=info --pool=gevent --concurrency=20
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=20
     env_file:
       - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - ./app:/app/app
+      - .:/app  # ← ВЕСЬ проект
       - ./cookies.txt:/app/cookies.txt
 
   celery_beat:
@@ -52,9 +66,12 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
+      db:  # ← На будущее, если будут задачи с БД
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - ./app:/app/app
+      - .:/app  # ← ВЕСЬ проект
 
   flower:
     build: .
@@ -64,9 +81,10 @@ services:
     ports:
       - "5555:5555"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     volumes:
-      - ./app:/app/app
+      - .:/app  # ← ВЕСЬ проект
 
 volumes:
   postgres_data:

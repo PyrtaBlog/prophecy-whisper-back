@@ -1,3 +1,4 @@
+# app/repositories/channel_repo.py
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.models.channel import Channel

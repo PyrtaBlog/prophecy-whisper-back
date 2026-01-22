@@ -1,12 +1,15 @@
 # Используем актуальный Python образ с обновлёнными CA-сертификатами
 FROM python:3.11-slim-bookworm
 
-# Устанавливаем системные зависимости для yt-dlp и gevent
+# Устанавливаем системные зависимости
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        && rm -rf /var/lib/apt/lists/*
+        gnupg \
+        postgresql-client \
+        ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем пользователя без root-прав
 RUN addgroup --system app && adduser --system --group app
@@ -19,6 +22,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Копируем код приложения
 COPY . .
+
+# Устанавливаем SSL-сертификат Bright Data (обязательно для Immediate Access)
+COPY ca.crt /usr/local/share/ca-certificates/brightdata-ca.crt
+RUN update-ca-certificates
 
 # Меняем владельца файлов
 RUN chown -R app:app /app

@@ -1,61 +1,62 @@
-# app/workers/tasks.py
+import time
+import random
+from typing import cast
 from datetime import datetime, timedelta, timezone
+from sqlalchemy.orm import Session
+
 from app.workers.celery_app import celery_app
-from app.services.crawler import fetch_and_save_videos
 from app.db.session import SessionLocal
-from app.models.video import Video
+from app.models.channel import Channel
+from app.services.crawler import fetch_and_save_videos
+
 
 @celery_app.task(bind=True, max_retries=3)
 def process_channel_task(self, channel_id: str):
-    db = SessionLocal()
+    db: Session = SessionLocal()
     try:
-        # Определяем период: за последнюю неделю или с start_date
-        now = datetime.now(timezone.utc)
-        one_week_ago = now - timedelta(days=7)
-
-        # Получаем start_date из БД
-        from app.models.channel import Channel
         channel = db.query(Channel).filter(Channel.id == channel_id).first()
         if not channel:
-            return
+            raise ValueError(f"Channel {channel_id} not found")
 
-        search_start = max(channel.start_date, one_week_ago)
+        start_date_utc = cast(datetime, channel.start_date)
+        now = datetime.now(timezone.utc)
+        one_month_ago = now - timedelta(days=30)
+        search_start = max(start_date_utc, one_month_ago)
 
-        # Получаем и сохраняем новые видео
-        video_ids = fetch_and_save_videos(db, channel_id, search_start)
+        new_video_ids = fetch_and_save_videos(db, channel_id, search_start)
 
-        # Запускаем транскрипцию для каждого
-        for vid in video_ids:
-            transcribe_video_task.delay(vid)
+        for video_id in new_video_ids:
+            # Добавляем небольшую задержку между задачами
+            time.sleep(1)
+            transcribe_video_task.delay(video_id)
 
     except Exception as exc:
+        db.rollback()
         raise self.retry(exc=exc, countdown=60)
     finally:
         db.close()
 
+
 @celery_app.task(bind=True, max_retries=3)
 def transcribe_video_task(self, video_id: str):
+    """
+    Транскрибирует видео с защитой от 429 ошибок:
+    - Случайная задержка
+    - Использует Webshare + cookies (настраивается в transcript.py)
+    """
+    # Rate limiting: случайная пауза 1-3 секунды
+    time.sleep(random.uniform(1.0, 3.0))
+
     db = SessionLocal()
     try:
         from app.services.transcriber import transcribe_video_service
-        transcript = transcribe_video_service(db, video_id)
-
-        if transcript:
-            # 🔥 ЗАПУСКАЕМ AI EXTRACTOR СРАЗУ ПОСЛЕ ТРАНСКРИПЦИИ
-            from app.workers.tasks import extract_predictions_task
-            extract_predictions_task.delay(video_id, transcript)
-
+        transcribe_video_service(db, video_id)
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
+        db.rollback()
+        # Увеличиваем время повтора при 429
+        if "429" in str(exc) or "Too Many Requests" in str(exc):
+            raise self.retry(exc=exc, countdown=300)  # 5 минут
+        else:
+            raise self.retry(exc=exc, countdown=60)
     finally:
         db.close()
-
-@celery_app.task
-def extract_predictions_task(video_id: str, transcript: str):
-    """
-    Заглушка для AI Extractor.
-    Позже замените на вызов LLM.
-    """
-    print(f"🧠 AI Extractor: processing {video_id} (len={len(transcript)})")
-    # TODO: вызов GPT-4o / Claude / вашей модели
-    # Сохранение в таблицу `predictions`
